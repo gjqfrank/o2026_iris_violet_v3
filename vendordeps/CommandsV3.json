@@ -1,0 +1,27 @@
+{
+  "fileName": "CommandsV3.json",
+  "name": "Commands v3",
+  "version": "1.0.1",
+  "uuid": "4decdc05-a056-46cf-9561-39449bbb0130",
+  "wpilibYear": "2027_alpha7",
+  "mavenUrls": [
+    "https://frcmaven.wpi.edu/artifactory/development/"
+  ],
+  "jsonUrl": "",
+  "conflictsWith": [
+    {
+      "uuid": "111e20f7-815e-48f8-9dd6-e675ce75b266",
+      "errorMessage": "Users can not have both Commands v2 and Commands v3 vendordeps in their robot program.",
+      "offlineFileName": "CommandsV2.json"
+    }
+  ],
+  "javaDependencies": [
+    {
+      "groupId": "org.wpilib",
+      "artifactId": "commandsv3-java",
+      "version": "2027.0.0-alpha-7-56-gd0926336b"
+    }
+  ],
+  "jniDependencies": [],
+  "cppDependencies": []
+}
