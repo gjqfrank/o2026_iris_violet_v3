@@ -5,8 +5,7 @@ package frc.robot.sim;
 import org.wpilib.math.geometry.Rotation3d;
 import org.wpilib.math.geometry.Transform3d;
 import org.wpilib.math.geometry.Translation3d;
-import org.wpilib.vision.apriltag.AprilTag;
-import org.wpilib.vision.apriltag.AprilTagFieldLayout;
+import org.wpilib.fields.Field;
 import frc.robot.constants.FieldConstants;
 import frc.robot.subsystems.vision.VisionConstants;
 import frc.robot.subsystems.vision.VisionConstants.CameraConfig;
@@ -19,12 +18,7 @@ public final class SimConstants {
       new CameraConfig("SimFront", mount(0.25, 0, 0), 1.0),
       new CameraConfig("SimLeft", mount(0, 0.25, Math.PI / 2), 1.0),
       new CameraConfig("SimRight", mount(0, -0.25, -Math.PI / 2), 1.0));
-    public static final AprilTagFieldLayout REEF_LAYOUT = new AprilTagFieldLayout(
-      VisionConstants.aprilTagLayout.getTags().stream()
-        .filter(tag -> FieldConstants.ALL_REEF_TAG_IDS.contains(tag.getID()))
-        .map(tag -> new AprilTag(tag.getID(), tag.getPose())).toList(),
-      VisionConstants.aprilTagLayout.getFieldLength(),
-      VisionConstants.aprilTagLayout.getFieldWidth());
+  public static final Field REEF_LAYOUT = reefLayout();
   public static final int CAMERA_WIDTH = 640;
   public static final int CAMERA_HEIGHT = 480;
   public static final double CAMERA_DIAGONAL_FOV_DEGREES = 90;
@@ -53,6 +47,21 @@ public final class SimConstants {
     // Negative pitch points optical +X upward in WPILib coordinates.
     return new Transform3d(new Translation3d(x, y, 0.55),
         new Rotation3d(0, Math.toRadians(-15), yaw));
+  }
+
+  private static Field reefLayout() {
+    Field field = VisionConstants.aprilTagLayout;
+    return new Field(
+        field.name,
+        field.season,
+        field.game,
+        field.fieldImage,
+        field.getFieldLength(),
+        field.getFieldWidth(),
+        field.program,
+        field.getTags().stream()
+            .filter(tag -> FieldConstants.ALL_REEF_TAG_IDS.contains(tag.getID()))
+            .toList());
   }
 
   private SimConstants() {}

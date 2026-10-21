@@ -190,7 +190,6 @@ public class RobotContainer {
     }
     if (Constants.getMode() == Constants.Mode.SIM) {
       simulationVision = new VisionSystemSim("Reef");
-      simulationVision.addAprilTags(SimConstants.REEF_LAYOUT);
       simulationCorals = new CoralSceneSim(drive, elevator, spinIndexer,
           simulatedJaw, simulatedGripperRange, simulatedGripperColor,
           simulatedIndexerRange, simulatedIndexerColor, reefTargetColors);
