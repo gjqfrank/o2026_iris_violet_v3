@@ -2,7 +2,6 @@
 package frc.robot.subsystems;
 
 import java.util.Objects;
-import java.util.EnumMap;
 import java.util.OptionalInt;
 import java.util.Set;
 
@@ -88,7 +87,17 @@ public final class Superstructure {
     PICKING_UP_L4,
     PLACING_L2,
     PLACING_L3,
-    PLACING_L4
+    PLACING_L4;
+
+    private State state;
+
+    private void bind(State state) {
+      this.state = Objects.requireNonNull(state);
+    }
+
+    private State state() {
+      return Objects.requireNonNull(state, "SuperState is not registered with a StateMachine");
+    }
   }
 
   private final Drive drive;
@@ -109,8 +118,6 @@ public final class Superstructure {
   private final Trigger placeButton =
       gamepad.rightTrigger(CoralHandlingConstants.TRIGGER_THRESHOLD).risingEdge();
   private final StateMachine stateMachine = new StateMachine("Superstructure");
-  private final EnumMap<SuperState, State> states =
-      new EnumMap<>(SuperState.class);
 
   private SuperState currentSuperState = SuperState.STOPPED;
   private SuperState previousSuperState = SuperState.STOPPED;
@@ -147,22 +154,21 @@ public final class Superstructure {
     this.jaw = jaw;
     this.coralSensor = coralSensor;
 
-    for (SuperState state : SuperState.values()) {
-      State machineState = stateMachine.addState(stateCommand(state));
-      machineState.onEnter(() -> enterState(state));
-      states.put(state, machineState);
+    for (SuperState fromState : SuperState.values()) {
+      fromState.bind(stateMachine.addState(stateCommand(fromState)));
+      fromState.state().onEnter(() -> enterState(fromState));
     }
-    stateMachine.setInitialState(states.get(defaultCurrentState()));
-    for (SuperState from : SuperState.values()) {
-      State fromState = states.get(from);
-      fromState.switchTo(states.get(SuperState.STOPPED)).when(() -> stopRequested);
-      addGamepadTransitions(fromState, from);
-      if (isReadyState(from)) {
-        fromState.switchTo(() -> states.get(defaultCurrentState()))
+    stateMachine.setInitialState(defaultCurrentState().state());
+    for (SuperState fromState : SuperState.values()) {
+      State fromStateNode = fromState.state();
+      fromStateNode.switchTo(SuperState.STOPPED.state()).when(() -> stopRequested);
+      addGamepadTransitions(fromStateNode, fromState);
+      if (isReadyState(fromState)) {
+        fromStateNode.switchTo(() -> defaultCurrentState().state())
             .when(() -> defaultCurrentState() != currentSuperState);
       }
-      if (from != SuperState.STOPPED) {
-        fromState.switchTo(() -> states.get(defaultCurrentState())).whenComplete();
+      if (fromState != SuperState.STOPPED) {
+        fromStateNode.switchTo(() -> defaultCurrentState().state()).whenComplete();
       }
     }
     gamepad.view().onTrue(
@@ -176,29 +182,30 @@ public final class Superstructure {
     Scheduler.getDefault().schedule(stateMachine);
   }
 
-  private void addGamepadTransitions(State from, SuperState sourceState) {
-    transition(from, sourceState, SuperState.SCANNING_CORAL, scanButton);
-    transition(from, sourceState, SuperState.GETTING_BLACK_CORAL, getBlackButton);
-    transition(from, sourceState, SuperState.GETTING_WHITE_CORAL, getWhiteButton);
-    from.switchTo(() -> states.get(stowOrStoreState()))
-        .when(() -> stowOrStoreState() != sourceState && stowOrStoreButton.getAsBoolean());
-    transition(from, sourceState, SuperState.PREPARING_L2, prepareL2Button);
-    transition(from, sourceState, SuperState.PREPARING_L3, prepareL3Button);
-    transition(from, sourceState, SuperState.PREPARING_L4, prepareL4Button);
-    from.switchTo(() -> states.get(pickupStateForLevel(selectedLevel)))
+  private void addGamepadTransitions(State fromStateNode, SuperState fromState) {
+    transition(fromStateNode, fromState, SuperState.SCANNING_CORAL, scanButton);
+    transition(fromStateNode, fromState, SuperState.GETTING_BLACK_CORAL, getBlackButton);
+    transition(fromStateNode, fromState, SuperState.GETTING_WHITE_CORAL, getWhiteButton);
+    fromStateNode.switchTo(() -> stowOrStoreState().state())
+        .when(() -> stowOrStoreState() != fromState && stowOrStoreButton.getAsBoolean());
+    transition(fromStateNode, fromState, SuperState.PREPARING_L2, prepareL2Button);
+    transition(fromStateNode, fromState, SuperState.PREPARING_L3, prepareL3Button);
+    transition(fromStateNode, fromState, SuperState.PREPARING_L4, prepareL4Button);
+    fromStateNode.switchTo(() -> pickupStateForLevel(selectedLevel).state())
       .when(() -> pickupStateForLevel(selectedLevel) != null
-          && pickupStateForLevel(selectedLevel) != sourceState
+          && pickupStateForLevel(selectedLevel) != fromState
           && pickupButton.getAsBoolean());
-    from.switchTo(() -> states.get(placeStateForLevel(selectedLevel)))
+    fromStateNode.switchTo(() -> placeStateForLevel(selectedLevel).state())
       .when(() -> placeStateForLevel(selectedLevel) != null
-          && placeStateForLevel(selectedLevel) != sourceState
+          && placeStateForLevel(selectedLevel) != fromState
           && placeButton.getAsBoolean());
   }
 
-  private void transition(State fromState, SuperState from, SuperState to, Trigger button) {
-    if (from != to) {
-      fromState.switchTo(states.get(to))
-          .when(() -> currentSuperState == from && button.getAsBoolean());
+  private void transition(
+      State fromStateNode, SuperState fromState, SuperState commandedState, Trigger button) {
+    if (fromState != commandedState) {
+      fromStateNode.switchTo(commandedState.state())
+          .when(() -> currentSuperState == fromState && button.getAsBoolean());
     }
   }
 
