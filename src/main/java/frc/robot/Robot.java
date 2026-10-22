@@ -29,6 +29,7 @@ public class Robot extends LoggedRobot {
   private static final double SIM_AUTO_ENABLE_DELAY_SECS = 0.5;
 
   private Command autonomousCommand;
+  private Command teleopCommand;
   private RobotContainer robotContainer;
   private final BatteryLogger batteryLogger;
   public static CANcoderBootValidator cancoderValidator;
@@ -128,7 +129,9 @@ public class Robot extends LoggedRobot {
 
   /** This function is called once when the robot is disabled. */
   @Override
-  public void disabledInit() {}
+  public void disabledInit() {
+    cancelTeleopCommand();
+  }
 
   /** This function is called periodically when disabled. */
   @Override
@@ -137,6 +140,7 @@ public class Robot extends LoggedRobot {
   /** This autonomous runs the autonomous command selected by your {@link RobotContainer} class. */
   @Override
   public void autonomousInit() {
+    cancelTeleopCommand();
     robotContainer.applyAutoDriveCurrentLimit();
     robotContainer.initializeSpinIndexerPreload();
     autonomousCommand = robotContainer.getAutonomousCommand();
@@ -153,6 +157,7 @@ public class Robot extends LoggedRobot {
   /** This function is called once when teleop is enabled. */
   @Override
   public void teleopInit() {
+    cancelTeleopCommand();
     // This makes sure that the autonomous stops running when
     // teleop starts running. If you want the autonomous to
     // continue until interrupted by another command, remove
@@ -162,11 +167,25 @@ public class Robot extends LoggedRobot {
     }
     robotContainer.applyTeleopDriveCurrentLimit();
     robotContainer.initializeCoralPreloadIfNeeded();
+    teleopCommand = robotContainer.getTeleopCommand();
+    Scheduler.getDefault().schedule(teleopCommand);
   }
 
   /** This function is called periodically during operator control. */
   @Override
   public void teleopPeriodic() {}
+
+  @Override
+  public void testInit() {
+    cancelTeleopCommand();
+  }
+
+  private void cancelTeleopCommand() {
+    if (teleopCommand != null) {
+      Scheduler.getDefault().cancel(teleopCommand);
+      teleopCommand = null;
+    }
+  }
 
   /** This function is called once when the robot is first started up. */
   @Override

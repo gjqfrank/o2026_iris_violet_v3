@@ -293,6 +293,11 @@ public class RobotContainer {
       .named("Autonomous");
   }
 
+  /** Creates a fresh teleop control command; call after initializing preload selections. */
+  public Command getTeleopCommand() {
+    return superstructure.controlCommand();
+  }
+
   private void configureAutoChooser() {
     autoOptions.put("Do Nothing", () -> instant("Auto:None", () -> {}));
     autoOptions.put("Drive Wheel Radius Characterization",
