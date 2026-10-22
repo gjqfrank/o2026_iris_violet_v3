@@ -176,7 +176,7 @@ public class Robot extends LoggedRobot {
   public void teleopPeriodic() {}
 
   @Override
-  public void testInit() {
+  public void utilityInit() {
     cancelTeleopCommand();
   }
 
