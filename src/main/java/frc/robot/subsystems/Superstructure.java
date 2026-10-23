@@ -280,7 +280,7 @@ public final class Superstructure {
    * until another wanted state preempts it.
    */
   public void stop() {
-    drive.stop();
+    // drive.stop();
     elevator.stop();
     indexer.stop();
     stopRequested = true;
@@ -347,7 +347,7 @@ public final class Superstructure {
       currentSuperState = state;
     }
     if (state == SuperState.STOPPED) {
-      stopRequested = false;
+      stopRequested = true;
     }
     if (state == SuperState.HOMING) {
       // Homing must not finish by returning to a previously prepared reef pose.
@@ -384,7 +384,7 @@ public final class Superstructure {
 
   private Set<Mechanism> requirementsFor(SuperState state) {
     return switch (state) {
-      case STOPPED -> Set.of(drive, elevator, indexer);
+      case STOPPED -> Set.of(elevator, indexer);
       case HOMING, READY_EMPTY, READY_HOLDING_CORAL, PREPARED_L2, PREPARED_L3, PREPARED_L4 ->
           Set.of(elevator);
       case STOWING, PREPARING_L2, PREPARING_L3, PREPARING_L4 -> Set.of(elevator, indexer);
@@ -399,7 +399,7 @@ public final class Superstructure {
   private Command actionCommand(SuperState state) {
     return switch (state) {
       case STOPPED -> Command.noRequirements(coroutine -> {
-        drive.stop();
+        // drive.stop();
         elevator.stop();
         indexer.stop();
         coroutine.park();
@@ -422,7 +422,6 @@ public final class Superstructure {
   }
 
   private void stopMechanisms(Set<Mechanism> requirements) {
-    if (requirements.contains(drive)) drive.stop();
     if (requirements.contains(elevator)) elevator.stop();
     if (requirements.contains(indexer)) indexer.stop();
   }
