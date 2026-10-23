@@ -347,7 +347,7 @@ public final class Superstructure {
       currentSuperState = state;
     }
     if (state == SuperState.STOPPED) {
-      stopRequested = true;
+      stopRequested = false;
     }
     if (state == SuperState.HOMING) {
       // Homing must not finish by returning to a previously prepared reef pose.
