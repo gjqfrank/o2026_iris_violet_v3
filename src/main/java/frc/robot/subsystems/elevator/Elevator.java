@@ -15,7 +15,6 @@ import org.wpilib.system.Timer;
 import frc.robot.commands.ElevatorHomingCommand;
 import frc.robot.constants.Constants;
 import frc.robot.constants.Constants.Mode;
-import frc.robot.constants.CoralHandlingConstants;
 import frc.robot.energy.BatteryChannel;
 import frc.robot.energy.BatteryLogger;
 import frc.robot.subsystems.elevator.ElevatorIO.Axis;
@@ -47,10 +46,6 @@ public class Elevator implements Mechanism {
   private double pivotSettledSince = Double.NaN;
   private double arrivalTimestamp = Double.NaN;
 
-  // Safe travel toward a pose, judged live from the arm every cycle: below the safe swing
-  // height the pivot waits while the height rises to it; from there the pose is driven to.
-  private ArmPose travelGoal;
-
   public Elevator(ElevatorIO io) {
     Scheduler.getDefault().addPeriodic(this::periodic);
     this.io = io;
@@ -70,7 +65,6 @@ public class Elevator implements Mechanism {
     }
 
     updateArrivalState();
-    applyTravel();
     Logger.recordOutput("Elevator/AtHeight", atHeight());
     Logger.recordOutput("Elevator/AtPivotAngle", atPivotAngle());
     Logger.recordOutput("Elevator/AtTargets", atTargets());
@@ -103,57 +97,13 @@ public class Elevator implements Mechanism {
     setTargets(controlState == ControlState.POSITION ? heightTarget : inputs.height, angle);
   }
 
-  /** A direct command replaces any running safe travel. */
+  /** Direct two-axis setpoint; coordinated safe travel belongs to ElevatorMoveSafelyCommand. */
   public void setTargets(Distance height, Angle angle) {
-    travelGoal = null;
     commandTargets(height, angle);
   }
 
   public void setTargets(ArmPose pose) {
     setTargets(pose.height(), pose.pivot());
-  }
-
-  /**
-   * Requests the safe path toward a pose, judged live from where the arm is: while the pivot
-   * still has to turn below the safe swing height, rise first and keep the pivot; otherwise
-   * drive straight to the pose. Re-issuing the same pose continues the travel; a different pose
-   * restarts from wherever the arm is. The travel drives itself every cycle until it is
-   * replaced by a direct command, a new travel, or a stop.
-   */
-  public void moveSafelyTo(ArmPose pose) {
-    if (travelGoal != null && samePose(travelGoal, pose)) {
-      return;
-    }
-    travelGoal = pose;
-    applyTravel();
-  }
-
-  /** Judges from the live arm every cycle: rise with the pivot held, or drive to the pose. */
-  private void applyTravel() {
-    if (travelGoal == null) {
-      return;
-    }
-    if (!isSafeToSwing() && pivotNeedsToMove()) {
-      // Rise to at least the safe swing height first; keep the pivot where it is commanded.
-      commandTargets(Meters.of(Math.max(
-          CoralHandlingConstants.INDEXER_MIN_SAFE_HEIGHT.in(Meters)
-              + CoralHandlingConstants.INDEXER_HEIGHT_MARGIN.in(Meters),
-          heightTarget.in(Meters))), pivotTarget);
-    } else {
-      // Pivot already settled or safe to swing right now: drive straight to the pose.
-      commandTargets(travelGoal.height(), travelGoal.pivot());
-    }
-  }
-
-  /** True when the measured height already lets the pivot swing where it is. */
-  private boolean isSafeToSwing() {
-    return inputs.height.in(Meters) >= CoralHandlingConstants.INDEXER_MIN_SAFE_HEIGHT.in(Meters)
-        + CoralHandlingConstants.INDEXER_HEIGHT_MARGIN.in(Meters);
-  }
-
-  /** True while the travel still has to turn the pivot away from its commanded angle. */
-  private boolean pivotNeedsToMove() {
-    return Double.compare(pivotTarget.in(Radians), travelGoal.pivot().in(Radians)) != 0;
   }
 
   /** True once either direct or safe travel has settled at the commanded pose. */
@@ -190,11 +140,6 @@ public class Elevator implements Mechanism {
     pivotTarget = newPivotTarget;
     controlState = ControlState.POSITION;
     io.setPosition(heightTarget, pivotTarget);
-  }
-
-  private static boolean samePose(ArmPose a, ArmPose b) {
-    return Double.compare(a.height().in(Meters), b.height().in(Meters)) == 0
-        && Double.compare(a.pivot().in(Radians), b.pivot().in(Radians)) == 0;
   }
 
   /**
@@ -278,7 +223,6 @@ public class Elevator implements Mechanism {
 
   public Current getLeaderStatorCurrent() { return inputs.leaderStatorCurrent; }
   public Current getFollowerStatorCurrent() { return inputs.followerStatorCurrent; }
-  // TODO: homingCommand() returns with the commands-layer migration (ElevatorHomingCommand is v2).
 
   public boolean setMusicTone(Frequency frequency) {
     if (!configurationReady() || !isHomed() || !RobotState.isDisabled()) {
@@ -350,7 +294,6 @@ public class Elevator implements Mechanism {
   }
 
   public void stop() {
-    travelGoal = null;
     resetArrivalState();
     inputs.homingActive = false;
     controlState = ControlState.STOPPED;
@@ -358,6 +301,24 @@ public class Elevator implements Mechanism {
     heightTarget = inputs.height;
     pivotTarget = inputs.pivotAngle;
     io.stop();
+  }
+
+  /** Finite direct motion, for a path whose swept space is already known to be clear. */
+  public Command moveToCommand(ArmPose pose) {
+    return run(coroutine -> {
+          if (!pose.configured() || !isPositionControlReady()) {
+            stop();
+            coroutine.park();
+          }
+          setTargets(pose);
+          coroutine.waitUntil(() -> hasReached(pose) || !isPositionControlReady());
+          if (!isPositionControlReady()) {
+            stop();
+            coroutine.park();
+          }
+        })
+        .whenCanceled(this::stop)
+        .named("Elevator:MoveToPose");
   }
 
   public Command runPositionCommand(Supplier<Distance> height, Supplier<Angle> pivot) {

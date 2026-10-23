@@ -379,6 +379,37 @@ public class SpinIndexer implements Mechanism {
 
   // ========== Command Factories ==========
 
+  /** Natural completion keeps the slot's position loop active for the transfer. */
+  public Command rotateToSlotCommand(int slot) {
+    checkSlotIndex(slot);
+    return rotateToAngleCommand(slotAngle(slot), SpinIndexerConstants.SLOT_ALIGNMENT_TOLERANCE,
+        CoralHandlingConstants.INDEXER_SETTLE_SECONDS);
+  }
+
+  public Command rotateToAngleCommand(Angle target, Angle tolerance, double settleSeconds) {
+    Objects.requireNonNull(target, "target");
+    Objects.requireNonNull(tolerance, "tolerance");
+    return run(coroutine -> {
+          stop();
+          slotSettledSince = Double.NaN;
+          angleSettledSince = Double.NaN;
+          coroutine.waitUntil(() -> isPositionControlReady() && isSafeToRotate()
+              && Double.isFinite(target.in(Rotations))
+              && CoralHandlingConstants.positive(tolerance.in(Rotations))
+              && CoralHandlingConstants.positive(settleSeconds));
+          rotateToAngle(target);
+          while (!isAngleSettled(target, tolerance, settleSeconds)) {
+            if (!isPositionControlReady() || !isSafeToRotate()) {
+              stop();
+              coroutine.park();
+            }
+            coroutine.yield();
+          }
+        })
+        .whenCanceled(this::stop)
+        .named("SpinIndexer:RotateAndSettle");
+  }
+
   public Command runVoltageCommand(Supplier<Voltage> voltage) {
     BooleanSupplier isFinished = () -> false;
     return run(
