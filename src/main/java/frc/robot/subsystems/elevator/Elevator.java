@@ -33,9 +33,9 @@ public class Elevator implements Mechanism {
   private final ElevatorIOInputsAutoLogged inputs = new ElevatorIOInputsAutoLogged();
   private final int tuningId = System.identityHashCode(this);
   private final Alert mechanismUnavailable =
-      new Alert("hardware unconfigured","Elevator differential configuration/mechanism unavailable.", Level.HIGH);
+      new Alert("Elevator", "MechanismUnavailable", "Elevator differential configuration/mechanism unavailable.", Level.HIGH);
   private final Alert heightNotCalibrated =
-      new Alert("not homed","Elevator height requires homing or manual home reset.", Level.MEDIUM);
+      new Alert("Elevator", "NotHomed", "Elevator height requires homing or manual home reset.", Level.MEDIUM);
 
   private ControlState controlState = ControlState.STOPPED;
   private Distance heightTarget = ElevatorConstants.HOME_POSITION;

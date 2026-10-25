@@ -62,7 +62,7 @@ public class BatteryLogger {
   private boolean anyInvalidReportThisLoop = false;
 
   private final Alert invalidReportAlert =
-      new Alert("invalid input","BatteryLogger received invalid supply current (NaN/Inf).", Alert.Level.MEDIUM);
+      new Alert("BatteryLogger", "InvalidSupplyCurrent", "BatteryLogger received invalid supply current (NaN/Inf).", Alert.Level.MEDIUM);
 
   private BatteryLogger() {}
 

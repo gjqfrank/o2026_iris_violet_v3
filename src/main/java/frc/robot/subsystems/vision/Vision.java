@@ -60,9 +60,9 @@ public class Vision implements Mechanism {
       cameraConfigurationValid[i] = Constants.getMode() != Mode.REAL || REAL_IO_CONFIGURED;
       inputs[i] = new VisionIOInputsAutoLogged();
       disconnectedAlerts[i] =
-          new Alert("camera diaconnected","Vision camera " + (i + 1) + " disconnected.", Level.MEDIUM);
+          new Alert("Vision", "Camera" + i + "/Disconnected", "Vision camera " + (i + 1) + " disconnected.", Level.MEDIUM);
       unconfiguredAlerts[i] =
-          new Alert("camera unconfigured","Vision camera " + (i + 1) + " name/extrinsics not configured.",
+          new Alert("Vision", "Camera" + i + "/Unconfigured", "Vision camera " + (i + 1) + " name/extrinsics not configured.",
               Level.MEDIUM);
     }
   }

@@ -178,9 +178,9 @@ public class TunerConstants {
   private static final int kPigeonId = 0;
 
   // These are only used for simulation
-  // TODO: Derive mechanism/output-shaft inertias from this module's CAD, kg*m^2.
-  private static final MomentOfInertia kSteerInertia = KilogramSquareMeters.of(-1); // TODO: Estimate azimuth output inertia, kg*m^2.
-  private static final MomentOfInertia kDriveInertia = KilogramSquareMeters.of(-1); // TODO: Estimate wheel output inertia, kg*m^2.
+  // Matches glacier_blue_v3's sim inertia estimates until CAD-derived values are available.
+  private static final MomentOfInertia kSteerInertia = KilogramSquareMeters.of(0.01);
+  private static final MomentOfInertia kDriveInertia = KilogramSquareMeters.of(0.035);
   // Simulated voltage necessary to overcome friction
   private static final Voltage kSteerFrictionVoltage = Volts.of(0.2); // TODO: Validate this simulation-only friction assumption against real module behavior, V.
   private static final Voltage kDriveFrictionVoltage = Volts.of(0.2); // TODO: Validate this simulation-only friction assumption against real module behavior, V.

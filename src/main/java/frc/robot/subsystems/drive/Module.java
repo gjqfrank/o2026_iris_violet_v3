@@ -39,11 +39,23 @@ public class Module {
     this.index = index;
     this.constants = constants;
     driveDisconnectedAlert =
-        new Alert("motor disconnected","Disconnected drive motor on module " + index + ".", Level.HIGH);
+        new Alert(
+            "Drive",
+            "Module" + index + "/DriveDisconnected",
+            "Disconnected drive motor on module " + index + ".",
+            Level.HIGH);
     turnDisconnectedAlert =
-        new Alert("motor disconnected","Disconnected turn motor on module " + index + ".", Level.HIGH);
+        new Alert(
+            "Drive",
+            "Module" + index + "/TurnDisconnected",
+            "Disconnected turn motor on module " + index + ".",
+            Level.HIGH);
     turnEncoderDisconnectedAlert =
-        new Alert("encoder disconnected","Disconnected turn encoder on module " + index + ".", Level.HIGH);
+        new Alert(
+            "Drive",
+            "Module" + index + "/EncoderDisconnected",
+            "Disconnected turn encoder on module " + index + ".",
+            Level.HIGH);
   }
 
   public void periodic() {

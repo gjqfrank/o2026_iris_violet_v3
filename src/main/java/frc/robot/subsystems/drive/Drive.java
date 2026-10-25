@@ -61,7 +61,7 @@ public class Drive implements Mechanism {
   private final Module[] modules;
   private final SysIdRoutine sysId;
   private final Alert gyroDisconnectedAlert =
-      new Alert("gyro disconnected","Disconnected gyro, using kinematics as fallback.", Level.HIGH);
+      new Alert("Drive", "GyroDisconnected", "Disconnected gyro, using kinematics as fallback.", Level.HIGH);
   private final SwerveDriveKinematics kinematics =
       new SwerveDriveKinematics(getModuleTranslations());
   private Rotation2d rawGyroRotation = Rotation2d.ZERO;

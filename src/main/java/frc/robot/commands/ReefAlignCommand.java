@@ -78,7 +78,8 @@ public final class ReefAlignCommand implements Command {
     this.visionFresh = visionFresh;
     unavailableAlert =
       new Alert(
-        "Reef alignment " + branch + " unavailable.",
+        "ReefAlign",
+        branch + "/Unavailable",
         "Reef alignment is unavailable.",
         Level.MEDIUM);
   }

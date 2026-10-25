@@ -22,9 +22,9 @@ public class EndEffector implements Mechanism {
   private final EndEffectorIO io;
   private final EndEffectorIOInputsAutoLogged inputs = new EndEffectorIOInputsAutoLogged();
   private final Alert hardwareUnconfigured =
-      new Alert("hardware unconfigured","EndEffector hardware is not configured; real IO disabled.", Level.MEDIUM);
+      new Alert("EndEffector", "HardwareUnconfigured", "EndEffector hardware is not configured; real IO disabled.", Level.MEDIUM);
   private final Alert solenoidFault =
-      new Alert("solenoidFault","EndEffector solenoid channel disabled by PH fault.", Level.MEDIUM);
+      new Alert("EndEffector", "SolenoidFault", "EndEffector solenoid channel disabled by PH fault.", Level.MEDIUM);
 
   public EndEffector(EndEffectorIO io) {
     Scheduler.getDefault().addPeriodic(this::periodic);
