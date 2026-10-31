@@ -1,68 +1,49 @@
 // Copyright (c) 2026 FRC 6907, The G.O.A.T
 package frc.robot.subsystems;
 
-import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
-import java.util.OptionalInt;
 import java.util.Set;
-import java.util.function.Predicate;
 
 import org.littletonrobotics.junction.Logger;
 
 import org.wpilib.math.geometry.Pose2d;
-import static org.wpilib.units.Units.Meters;
-import static org.wpilib.units.Units.Seconds;
-import org.wpilib.units.measure.Angle;
-import org.wpilib.units.measure.Distance;
 import org.wpilib.command3.Command;
-import org.wpilib.command3.Coroutine;
 import org.wpilib.command3.Mechanism;
 import org.wpilib.command3.StateMachine;
 import org.wpilib.command3.StateMachine.State;
 import org.wpilib.command3.button.CommandXboxController;
 import org.wpilib.command3.Trigger;
-import frc.robot.commands.ElevatorMoveSafelyCommand;
-import frc.robot.commands.ReefAlignCommand;
 import frc.robot.commands.ReefAlignCommand.AlignmentTarget;
+import frc.robot.commands.SuperstructureCommandFactory;
 import frc.robot.constants.CoralHandlingConstants;
-import static frc.robot.constants.CoralHandlingConstants.INDEXER_PICKUP;
-import static frc.robot.constants.CoralHandlingConstants.INDEXER_STORE;
-import static frc.robot.constants.CoralHandlingConstants.GRAB_ENTRY_HEIGHT_DROP;
-import static frc.robot.constants.CoralHandlingConstants.PLACE_EXIT_HEIGHT_DROP;
-import static frc.robot.constants.CoralHandlingConstants.VERTICAL_UP_PIVOT_ANGLE;
-import static frc.robot.constants.CoralHandlingConstants.REEF_HEADING_TOLERANCE_RADIANS;
-import static frc.robot.constants.CoralHandlingConstants.REEF_POSITION_TOLERANCE_METERS;
-import static frc.robot.constants.CoralHandlingConstants.STOW;
-import static frc.robot.constants.CoralHandlingConstants.reefHeight;
-import static frc.robot.constants.CoralHandlingConstants.reefPlaceAngle;
-import static frc.robot.constants.CoralHandlingConstants.reefPreparationAngle;
-import frc.robot.constants.InventoryScanConstants;
 import frc.robot.constants.ReefAlignConstants.RobotSide;
 import frc.robot.subsystems.coralsensor.CoralSensor;
 import frc.robot.subsystems.drive.Drive;
 import frc.robot.subsystems.elevator.Elevator;
-import frc.robot.subsystems.elevator.ElevatorConstants;
-import frc.robot.subsystems.elevator.ElevatorConstants.ArmPose;
 import frc.robot.subsystems.endeffector.EndEffector;
 import frc.robot.subsystems.spinindexer.CoralState;
 import frc.robot.subsystems.spinindexer.SpinIndexer;
-import frc.robot.subsystems.spinindexer.SpinIndexerConstants;
 import frc.robot.util.ReefTargetColors.Level;
 
 /**
  * Coral superstructure whose {@link #controlCommand()} builds a Commands v3 {@link StateMachine}.
- * Each invocation owns its state nodes; {@link SuperState} only identifies states for telemetry.
- * The gamepad lives here as well: its button triggers define
- * direct {@code switchTo(...).when(...)} edges between machine states, with no parallel requested
- * state. Action states complete naturally and use {@code whenComplete()} to return to the
- * inventory-appropriate ready/held/prepared state. Each action is a coroutine sequence whose
- * child commands wait for motion, jaw actuation, and turntable settling.
+ * The v3 machine is the only state representation: {@link SuperstructureCommandFactory}'s static
+ * builders construct every state's action command from the mechanisms they command, and the state
+ * table in {@code controlCommand()} pairs each state name with its owned mechanisms and action in
+ * one place. Every state keeps its name — the name of the command bound to the node — which
+ * telemetry reports as the current state. The gamepad
+ * lives here as well: its button triggers define direct {@code switchTo(...).when(...)} edges
+ * between machine states, with no parallel requested state. Action states complete naturally and
+ * use {@code whenComplete()} to return to the inventory-appropriate ready/held/prepared state.
  *
  * <p>This class also owns the robot's global coral records — slot1CoralState, slot2CoralState,
  * slot3CoralState and endEffectorCoralState, plus the operator context selectedLevel,
- * selectedSide and alignment. Actions update only these records; no other copy of the coral
- * state exists anywhere in the code. Every record is logged every cycle, and an action that
- * finishes updates the records to reflect the confirmed observations.
+ * selectedSide and alignment. The factory's actions update these records through the accessors
+ * below; no other copy of the coral state exists anywhere in the code. Every record is logged
+ * every cycle, and an action that finishes updates the records to reflect the confirmed
+ * observations.
  *
  * <p>Gates hold an action at its current step until conditions are met, 2910-style: the jaw must
  * be free before taking a coral and holding one before storing or placing it, and the chassis
@@ -72,29 +53,18 @@ import frc.robot.util.ReefTargetColors.Level;
  * stops owned motors and leaves the jaw valve unchanged.
  */
 public final class Superstructure {
-  public enum SuperState {
-    STOPPED,
-    HOMING,
-    READY_EMPTY,
-    READY_HOLDING_CORAL,
-    SCANNING_CORAL,
-    PREPARED_L2,
-    PREPARED_L3,
-    PREPARED_L4,
-    STOWING,
-    STORING_CORAL,
-    GETTING_BLACK_CORAL,
-    GETTING_WHITE_CORAL,
-    PREPARING_L2,
-    PREPARING_L3,
-    PREPARING_L4,
-    PICKING_UP_L2,
-    PICKING_UP_L3,
-    PICKING_UP_L4,
-    PLACING_L2,
-    PLACING_L3,
-    PLACING_L4
-  }
+  /** State names that move mechanisms toward a goal; telemetry reports them as busy. */
+  private static final Set<String> ACTION_STATES = Set.of(
+      "HOMING", "STOWING", "SCANNING_CORAL",
+      "STORING_CORAL", "GETTING_BLACK_CORAL", "GETTING_WHITE_CORAL",
+      "PREPARING_L2", "PREPARING_L3", "PREPARING_L4",
+      "PICKING_UP_L2", "PICKING_UP_L3", "PICKING_UP_L4",
+      "PLACING_L2", "PLACING_L3", "PLACING_L4");
+
+  /** Reef action state names that must lock out chassis driving. */
+  private static final Set<String> REEF_ACTION_STATES = Set.of(
+      "PICKING_UP_L2", "PICKING_UP_L3", "PICKING_UP_L4",
+      "PLACING_L2", "PLACING_L3", "PLACING_L4");
 
   private final Drive drive;
   private final Elevator elevator;
@@ -115,14 +85,17 @@ public final class Superstructure {
       gamepad.rightTrigger(CoralHandlingConstants.TRIGGER_THRESHOLD).risingEdge();
   private final Trigger homingButton = gamepad.view().risingEdge();
 
-  private SuperState currentSuperState = SuperState.STOPPED;
-  private SuperState previousSuperState = SuperState.STOPPED;
+  // Name of the state machine state entered most recently; the v3 machine itself owns the true
+  // notion of "current state", these records only mirror it for telemetry and queries.
+  private String currentState = "STOPPED";
+  private String previousState = "STOPPED";
+  private Set<Mechanism> currentRequirements = Set.of();
   private boolean stopRequested;
   private String status = "PRELOAD_REQUIRED";
 
   // ========== The robot's global records ==========
-  // The only copies of the coral and operator state anywhere in the code. Actions write them;
-  // everything else reads them. All of them are logged every cycle.
+  // The only copies of the coral and operator state anywhere in the code. The factory's actions
+  // write them through the accessors below; everything else reads them. All are logged every cycle.
 
   private Level selectedLevel; // level of the last completed preparation
   private RobotSide selectedSide; // reef side of the last completed preparation
@@ -141,76 +114,167 @@ public final class Superstructure {
     this.coralSensor = coralSensor;
   }
 
-  /** Builds a fresh teleop state graph; the caller owns scheduling and cancellation. */
+  /**
+   * Builds a fresh teleop state graph; the caller owns scheduling and cancellation. The state
+   * table below is the single place that pairs every state name with its owned mechanisms and
+   * action command from {@link SuperstructureCommandFactory}.
+   */
   public Command controlCommand() {
-    StateMachine stateMachine = new StateMachine("Superstructure");
-    EnumMap<SuperState, State> states = new EnumMap<>(SuperState.class);
-    for (SuperState state : SuperState.values()) {
-      states.put(state, stateMachine.addState(stateCommand(state)));
-    }
-    stateMachine.setInitialState(states.get(defaultCurrentState()));
-    for (SuperState fromState : SuperState.values()) {
-      State fromStateNode = states.get(fromState);
-      fromStateNode.switchTo(states.get(SuperState.STOPPED)).when(() -> stopRequested);
-      if (fromState != SuperState.HOMING) {
-        addGamepadTransitions(states, fromState);
-      }
-      if (isReadyState(fromState) || fromState == SuperState.STOPPED) {
-        fromStateNode.switchTo(states.get(SuperState.HOMING)).when(homingButton);
-      }
-      if (isReadyState(fromState)) {
-        fromStateNode.switchTo(() -> states.get(defaultCurrentState()))
-            .when(() -> defaultCurrentState() != currentSuperState);
-      }
-      if (fromState != SuperState.STOPPED) {
-        fromStateNode.switchTo(() -> states.get(
-            stopRequested ? SuperState.STOPPED : defaultCurrentState())).whenComplete();
-      }
-    }
-    return Command.noRequirements(coroutine -> coroutine.await(stateMachine))
+    StateMachine machine = new StateMachine("Superstructure");
+
+    // ===== The state table: every state's name -> owned mechanisms + action command =====
+    Map<String, StateAction> table = Map.ofEntries(
+        Map.entry("STOPPED", new StateAction(Set.of(elevator, indexer),
+            SuperstructureCommandFactory.stoppedAction(elevator, indexer))),
+        Map.entry("HOMING", new StateAction(Set.of(elevator),
+            SuperstructureCommandFactory.homingAction(this, elevator))),
+        Map.entry("READY_EMPTY", new StateAction(Set.of(elevator),
+            SuperstructureCommandFactory.holdDefault(this, elevator))),
+        Map.entry("READY_HOLDING_CORAL", new StateAction(Set.of(elevator),
+            SuperstructureCommandFactory.holdDefault(this, elevator))),
+        Map.entry("PREPARED_L2", new StateAction(Set.of(elevator),
+            SuperstructureCommandFactory.holdPrepared(this, elevator, Level.L2))),
+        Map.entry("PREPARED_L3", new StateAction(Set.of(elevator),
+            SuperstructureCommandFactory.holdPrepared(this, elevator, Level.L3))),
+        Map.entry("PREPARED_L4", new StateAction(Set.of(elevator),
+            SuperstructureCommandFactory.holdPrepared(this, elevator, Level.L4))),
+        Map.entry("STOWING", new StateAction(Set.of(elevator, indexer),
+            SuperstructureCommandFactory.stowArm(this, elevator, indexer))),
+        Map.entry("STORING_CORAL", new StateAction(Set.of(elevator, indexer, jaw, coralSensor),
+            SuperstructureCommandFactory.storeCoral(this, elevator, indexer, jaw, coralSensor))),
+        Map.entry("SCANNING_CORAL", new StateAction(Set.of(elevator, indexer, coralSensor),
+            SuperstructureCommandFactory.scanSlots(this, elevator, indexer, coralSensor))),
+        Map.entry("GETTING_BLACK_CORAL", new StateAction(
+            Set.of(elevator, indexer, jaw, coralSensor),
+            SuperstructureCommandFactory.getCoral(
+                this, elevator, indexer, jaw, coralSensor, CoralState.BLACK))),
+        Map.entry("GETTING_WHITE_CORAL", new StateAction(
+            Set.of(elevator, indexer, jaw, coralSensor),
+            SuperstructureCommandFactory.getCoral(
+                this, elevator, indexer, jaw, coralSensor, CoralState.WHITE))),
+        Map.entry("PREPARING_L2", new StateAction(Set.of(elevator, indexer),
+            SuperstructureCommandFactory.prepareArm(this, drive, elevator, indexer, Level.L2))),
+        Map.entry("PREPARING_L3", new StateAction(Set.of(elevator, indexer),
+            SuperstructureCommandFactory.prepareArm(this, drive, elevator, indexer, Level.L3))),
+        Map.entry("PREPARING_L4", new StateAction(Set.of(elevator, indexer),
+            SuperstructureCommandFactory.prepareArm(this, drive, elevator, indexer, Level.L4))),
+        Map.entry("PICKING_UP_L2", new StateAction(
+            Set.of(drive, elevator, jaw, coralSensor),
+            SuperstructureCommandFactory.pickUpCoral(
+                this, drive, elevator, jaw, coralSensor, Level.L2))),
+        Map.entry("PICKING_UP_L3", new StateAction(
+            Set.of(drive, elevator, jaw, coralSensor),
+            SuperstructureCommandFactory.pickUpCoral(
+                this, drive, elevator, jaw, coralSensor, Level.L3))),
+        Map.entry("PICKING_UP_L4", new StateAction(
+            Set.of(drive, elevator, jaw, coralSensor),
+            SuperstructureCommandFactory.pickUpCoral(
+                this, drive, elevator, jaw, coralSensor, Level.L4))),
+        Map.entry("PLACING_L2", new StateAction(
+            Set.of(drive, elevator, jaw, coralSensor),
+            SuperstructureCommandFactory.placeCoral(
+                this, drive, elevator, jaw, coralSensor, Level.L2))),
+        Map.entry("PLACING_L3", new StateAction(
+            Set.of(drive, elevator, jaw, coralSensor),
+            SuperstructureCommandFactory.placeCoral(
+                this, drive, elevator, jaw, coralSensor, Level.L3))),
+        Map.entry("PLACING_L4", new StateAction(
+            Set.of(drive, elevator, jaw, coralSensor),
+            SuperstructureCommandFactory.placeCoral(
+                this, drive, elevator, jaw, coralSensor, Level.L4))));
+
+    Map<String, State> states = new HashMap<>();
+    table.forEach(
+        (name, action) -> states.put(name, addState(machine, name, action.requirements(), action.action())));
+    machine.setInitialState(states.get(defaultCurrentState()));
+
+    // ===== Transitions, in evaluation order =====
+    // 1. A requested stop preempts every state.
+    machine.switchFromAny().to(states.get("STOPPED")).when(() -> stopRequested);
+
+    // 2. Gamepad edges are available from every state except HOMING; a state never restarts itself.
+    State[] gamepadStates = statesNamed(states,
+        "STOPPED", "READY_EMPTY", "READY_HOLDING_CORAL", "PREPARED_L2", "PREPARED_L3", "PREPARED_L4",
+        "STOWING", "STORING_CORAL", "SCANNING_CORAL", "GETTING_BLACK_CORAL", "GETTING_WHITE_CORAL",
+        "PREPARING_L2", "PREPARING_L3", "PREPARING_L4",
+        "PICKING_UP_L2", "PICKING_UP_L3", "PICKING_UP_L4",
+        "PLACING_L2", "PLACING_L3", "PLACING_L4");
+    machine.switchFromAny(gamepadStates).to(states.get("SCANNING_CORAL"))
+        .when(() -> !inState("SCANNING_CORAL") && scanButton.getAsBoolean());
+    machine.switchFromAny(gamepadStates).to(states.get("GETTING_BLACK_CORAL"))
+        .when(() -> !inState("GETTING_BLACK_CORAL") && getBlackButton.getAsBoolean());
+    machine.switchFromAny(gamepadStates).to(states.get("GETTING_WHITE_CORAL"))
+        .when(() -> !inState("GETTING_WHITE_CORAL") && getWhiteButton.getAsBoolean());
+    machine.switchFromAny(gamepadStates).to(() -> states.get(stowOrStoreState()))
+        .when(() -> !stowOrStoreState().equals(currentState) && stowOrStoreButton.getAsBoolean());
+    machine.switchFromAny(gamepadStates).to(states.get("PREPARING_L2"))
+        .when(() -> !inState("PREPARING_L2") && prepareL2Button.getAsBoolean());
+    machine.switchFromAny(gamepadStates).to(states.get("PREPARING_L3"))
+        .when(() -> !inState("PREPARING_L3") && prepareL3Button.getAsBoolean());
+    machine.switchFromAny(gamepadStates).to(states.get("PREPARING_L4"))
+        .when(() -> !inState("PREPARING_L4") && prepareL4Button.getAsBoolean());
+    machine.switchFromAny(gamepadStates).to(() -> states.get(pickupStateForLevel(selectedLevel)))
+        .when(() -> pickupStateForLevel(selectedLevel) != null
+            && !pickupStateForLevel(selectedLevel).equals(currentState)
+            && pickupButton.getAsBoolean());
+    machine.switchFromAny(gamepadStates).to(() -> states.get(placeStateForLevel(selectedLevel)))
+        .when(() -> placeStateForLevel(selectedLevel) != null
+            && !placeStateForLevel(selectedLevel).equals(currentState)
+            && placeButton.getAsBoolean());
+
+    // 3. Homing is reachable from the stopped and ready states.
+    machine.switchFromAny(statesNamed(states, "STOPPED", "READY_EMPTY", "READY_HOLDING_CORAL",
+            "PREPARED_L2", "PREPARED_L3", "PREPARED_L4"))
+        .to(states.get("HOMING")).when(homingButton);
+
+    // 4. Ready states follow the inventory-appropriate default whenever it changes.
+    machine.switchFromAny(statesNamed(states, "READY_EMPTY", "READY_HOLDING_CORAL",
+            "PREPARED_L2", "PREPARED_L3", "PREPARED_L4"))
+        .to(() -> states.get(defaultCurrentState()))
+        .when(() -> !defaultCurrentState().equals(currentState));
+
+    // 5. Completed actions return to the stopped or default ready state.
+    machine.switchFromAny(statesNamed(states, "HOMING", "READY_EMPTY", "READY_HOLDING_CORAL",
+            "PREPARED_L2", "PREPARED_L3", "PREPARED_L4", "STOWING", "STORING_CORAL", "SCANNING_CORAL",
+            "GETTING_BLACK_CORAL", "GETTING_WHITE_CORAL", "PREPARING_L2", "PREPARING_L3",
+            "PREPARING_L4", "PICKING_UP_L2", "PICKING_UP_L3", "PICKING_UP_L4",
+            "PLACING_L2", "PLACING_L3", "PLACING_L4"))
+        .to(() -> states.get(stopRequested ? "STOPPED" : defaultCurrentState()))
+        .whenComplete();
+
+    return Command.noRequirements(coroutine -> coroutine.await(machine))
         .whenExited(this::clearRuntimeState)
         .named("Superstructure:Teleop");
   }
 
-  private void addGamepadTransitions(EnumMap<SuperState, State> states, SuperState fromState) {
-    State fromStateNode = states.get(fromState);
-    transition(states, fromState, SuperState.SCANNING_CORAL, scanButton);
-    transition(states, fromState, SuperState.GETTING_BLACK_CORAL, getBlackButton);
-    transition(states, fromState, SuperState.GETTING_WHITE_CORAL, getWhiteButton);
-    fromStateNode.switchTo(() -> states.get(stowOrStoreState()))
-        .when(() -> stowOrStoreState() != fromState && stowOrStoreButton.getAsBoolean());
-    transition(states, fromState, SuperState.PREPARING_L2, prepareL2Button);
-    transition(states, fromState, SuperState.PREPARING_L3, prepareL3Button);
-    transition(states, fromState, SuperState.PREPARING_L4, prepareL4Button);
-    fromStateNode.switchTo(() -> states.get(pickupStateForLevel(selectedLevel)))
-      .when(() -> pickupStateForLevel(selectedLevel) != null
-          && pickupStateForLevel(selectedLevel) != fromState
-          && pickupButton.getAsBoolean());
-    fromStateNode.switchTo(() -> states.get(placeStateForLevel(selectedLevel)))
-      .when(() -> placeStateForLevel(selectedLevel) != null
-          && placeStateForLevel(selectedLevel) != fromState
-          && placeButton.getAsBoolean());
+  /** A state's owned mechanisms and action command, paired in the state table. */
+  private record StateAction(Set<Mechanism> requirements, Command action) {}
+
+  /** Adds a named state whose command reserves its mechanisms and records the entry. */
+  private State addState(
+      StateMachine machine, String name, Set<Mechanism> requirements, Command action) {
+    Command command = Command.requiring(requirements)
+        .executing(coroutine -> {
+          // State.onEnter runs after the command's first execution, so initialize here.
+          enterState(name, requirements);
+          coroutine.await(action);
+        })
+        .whenCanceled(() -> stopMechanisms(requirements))
+        .named("Superstructure:" + name);
+    return machine.addState(command);
   }
 
-  private void transition(
-      EnumMap<SuperState, State> states,
-      SuperState fromState, SuperState commandedState, Trigger button) {
-    if (fromState != commandedState) {
-      states.get(fromState).switchTo(states.get(commandedState)).when(button);
+  /** Resolves state names to their machine nodes for the transition groups above. */
+  private static State[] statesNamed(Map<String, State> states, String... names) {
+    State[] selected = new State[names.length];
+    for (int i = 0; i < names.length; i++) {
+      selected[i] = states.get(names[i]);
     }
+    return selected;
   }
 
-  private SuperState stowOrStoreState() {
-    return endEffectorCoralState == CoralState.EMPTY
-        ? SuperState.STOWING : SuperState.STORING_CORAL;
-  }
-
-  private static boolean isReadyState(SuperState state) {
-    return state == SuperState.READY_EMPTY
-        || state == SuperState.READY_HOLDING_CORAL
-        || state == SuperState.PREPARED_L2
-        || state == SuperState.PREPARED_L3
-        || state == SuperState.PREPARED_L4;
+  private boolean inState(String name) {
+    return name.equals(currentState);
   }
 
   public CommandXboxController gamepad() {
@@ -218,7 +282,8 @@ public final class Superstructure {
   }
 
   // ========== Record access ==========
-  // Actions write the records directly; other classes only read through these.
+  // The factory's action commands write the records through the mutators in this section; other
+  // classes only read through the getters.
 
   /** Slot indices are zero-based: 0, 1, 2 correspond to dashboard Slot1, Slot2, Slot3. */
   public CoralState getSlotCoralState(int slot) {
@@ -234,7 +299,18 @@ public final class Superstructure {
     return endEffectorCoralState;
   }
 
-  private void setSlotCoralState(int slot, CoralState state) {
+  /** The reef side of the last completed preparation, or null when none is active. */
+  public RobotSide getSelectedSide() {
+    return selectedSide;
+  }
+
+  /** The reef face targeted by the bumpers, or null when no alignment is active. */
+  public AlignmentTarget getAlignment() {
+    return alignment;
+  }
+
+  /** Slot indices are zero-based: 0, 1, 2 correspond to dashboard Slot1, Slot2, Slot3. */
+  public void setSlotCoralState(int slot, CoralState state) {
     Objects.requireNonNull(state, "state");
     switch (slot) {
       case 0 -> slot1CoralState = state;
@@ -244,6 +320,38 @@ public final class Superstructure {
     }
   }
 
+  public void setEndEffectorCoralState(CoralState state) {
+    endEffectorCoralState = Objects.requireNonNull(state, "state");
+  }
+
+  /** Records a completed preparation; pass nulls to invalidate a stale selection. */
+  public void setPreparation(Level level, RobotSide side) {
+    selectedLevel = level;
+    selectedSide = side;
+  }
+
+  /** Forgets the preparation level, side, and bumper alignment. */
+  public void clearPreparation() {
+    selectedLevel = null;
+    selectedSide = null;
+    alignment = null;
+  }
+
+  /** Asks the machine to fall into STOPPED at the next transition check. */
+  public void requestStop() {
+    stopRequested = true;
+  }
+
+  /** Records a step within the current action, e.g. "PLACING_L2/RELEASING". */
+  public void setStatusStep(String step) {
+    status = currentState + "/" + step;
+  }
+
+  /** Halts the mechanisms owned by the currently entered state. */
+  public void stopOwnedMechanisms() {
+    stopMechanisms(currentRequirements);
+  }
+
   /** Applies the four preload choosers and forgets any stale operator choices. */
   public void applyPreload(
       CoralState slot1, CoralState slot2, CoralState slot3, CoralState gripperCoral) {
@@ -251,19 +359,17 @@ public final class Superstructure {
     slot2CoralState = Objects.requireNonNull(slot2, "slot2");
     slot3CoralState = Objects.requireNonNull(slot3, "slot3");
     endEffectorCoralState = Objects.requireNonNull(gripperCoral, "gripperCoral");
-    selectedLevel = null;
-    selectedSide = null;
-    alignment = null;
+    clearPreparation();
     // On the next state completion, the dynamic completion edge selects from the updated inventory.
     status = "PRELOAD_APPLIED";
   }
 
   public boolean isBusy() {
-    return isActionState(currentSuperState);
+    return ACTION_STATES.contains(currentState);
   }
 
   public boolean isDriveLocked() {
-    return isReefAction(currentSuperState);
+    return REEF_ACTION_STATES.contains(currentState);
   }
 
   public void observeAlignment(AlignmentTarget target) {
@@ -276,8 +382,8 @@ public final class Superstructure {
   }
 
   /**
-   * Stops every mechanism immediately and holds the STOPPED superstate — 2910's stopped() —
-   * until another wanted state preempts it.
+   * Stops every mechanism immediately and holds the STOPPED state — 2910's stopped() — until
+   * another wanted state preempts it.
    */
   public void stop() {
     // drive.stop();
@@ -300,8 +406,8 @@ public final class Superstructure {
     Logger.recordOutput("Superstructure/Busy", isBusy());
     Logger.recordOutput("Superstructure/DriveLocked", isDriveLocked());
     Logger.recordOutput("Superstructure/Status", status);
-    Logger.recordOutput("Superstructure/CurrentSuperState", currentSuperState.name());
-    Logger.recordOutput("Superstructure/PreviousSuperState", previousSuperState.name());
+    Logger.recordOutput("Superstructure/CurrentSuperState", currentState);
+    Logger.recordOutput("Superstructure/PreviousSuperState", previousState);
     Logger.recordOutput(
         "Superstructure/SelectedLevel", selectedLevel == null ? "UNSELECTED" : selectedLevel.name());
     Logger.recordOutput(
@@ -321,503 +427,75 @@ public final class Superstructure {
     Logger.recordOutput("Superstructure/EndEffectorCoralState", endEffectorCoralState.name());
   }
 
-  /** Holding still, ready to work with whatever the jaw currently has. */
-  private SuperState defaultCurrentState() {
-    if (endEffectorCoralState == CoralState.UNKNOWN) return SuperState.STOPPED;
+  /** The state to hold still in, ready to work with whatever the jaw currently has. */
+  private String defaultCurrentState() {
+    if (endEffectorCoralState == CoralState.UNKNOWN) return "STOPPED";
     if (selectedLevel != null && selectedSide != null) {
       return switch (selectedLevel) {
-        case L2 -> SuperState.PREPARED_L2;
-        case L3 -> SuperState.PREPARED_L3;
-        case L4 -> SuperState.PREPARED_L4;
-        default -> readyState();
+        case L2 -> "PREPARED_L2";
+        case L3 -> "PREPARED_L3";
+        case L4 -> "PREPARED_L4";
       };
     }
     return readyState();
   }
 
-  private SuperState readyState() {
+  private String readyState() {
     return endEffectorCoralState == CoralState.EMPTY
-        ? SuperState.READY_EMPTY
-        : SuperState.READY_HOLDING_CORAL;
+        ? "READY_EMPTY" : "READY_HOLDING_CORAL";
   }
 
-  private void enterState(SuperState state) {
-    if (currentSuperState != state) {
-      previousSuperState = currentSuperState;
-      currentSuperState = state;
+  private String stowOrStoreState() {
+    return endEffectorCoralState == CoralState.EMPTY ? "STOWING" : "STORING_CORAL";
+  }
+
+  private static String pickupStateForLevel(Level level) {
+    if (level == null) return null;
+    return switch (level) {
+      case L2 -> "PICKING_UP_L2";
+      case L3 -> "PICKING_UP_L3";
+      case L4 -> "PICKING_UP_L4";
+    };
+  }
+
+  private static String placeStateForLevel(Level level) {
+    if (level == null) return null;
+    return switch (level) {
+      case L2 -> "PLACING_L2";
+      case L3 -> "PLACING_L3";
+      case L4 -> "PLACING_L4";
+    };
+  }
+
+  private void enterState(String state, Set<Mechanism> requirements) {
+    if (!state.equals(currentState)) {
+      previousState = currentState;
+      currentState = state;
     }
-    if (state == SuperState.STOPPED) {
+    currentRequirements = requirements;
+    if (state.equals("STOPPED")) {
       stopRequested = false;
     }
-    if (state == SuperState.HOMING) {
+    if (state.equals("HOMING")) {
       // Homing must not finish by returning to a previously prepared reef pose.
-      selectedLevel = null;
-      selectedSide = null;
-      alignment = null;
+      clearPreparation();
     }
-    if (isActionState(state)) {
-      status = state.name();
+    if (ACTION_STATES.contains(state)) {
+      status = state;
     }
   }
 
   private void clearRuntimeState() {
-    previousSuperState = currentSuperState;
-    currentSuperState = SuperState.STOPPED;
+    previousState = currentState;
+    currentState = "STOPPED";
+    currentRequirements = Set.of();
     stopRequested = false;
-    selectedLevel = null;
-    selectedSide = null;
-    alignment = null;
+    clearPreparation();
     status = "INACTIVE";
-  }
-
-  private Command stateCommand(SuperState state) {
-    Set<Mechanism> requirements = requirementsFor(state);
-    return Command.requiring(requirements)
-        .executing(coroutine -> {
-          // State.onEnter runs after the command's first execution, so initialize here.
-          enterState(state);
-          coroutine.await(actionCommand(state));
-        })
-        .whenCanceled(() -> stopMechanisms(requirements))
-        .named("Superstructure:" + state.name());
-  }
-
-  private Set<Mechanism> requirementsFor(SuperState state) {
-    return switch (state) {
-      case STOPPED -> Set.of(elevator, indexer);
-      case HOMING, READY_EMPTY, READY_HOLDING_CORAL, PREPARED_L2, PREPARED_L3, PREPARED_L4 ->
-          Set.of(elevator);
-      case STOWING, PREPARING_L2, PREPARING_L3, PREPARING_L4 -> Set.of(elevator, indexer);
-      case SCANNING_CORAL -> Set.of(elevator, indexer, coralSensor);
-      case STORING_CORAL, GETTING_BLACK_CORAL, GETTING_WHITE_CORAL ->
-          Set.of(elevator, indexer, jaw, coralSensor);
-      case PICKING_UP_L2, PICKING_UP_L3, PICKING_UP_L4,
-          PLACING_L2, PLACING_L3, PLACING_L4 -> Set.of(drive, elevator, jaw, coralSensor);
-    };
-  }
-
-  private Command actionCommand(SuperState state) {
-    return switch (state) {
-      case STOPPED -> Command.noRequirements(coroutine -> {
-        // drive.stop();
-        elevator.stop();
-        indexer.stop();
-        coroutine.park();
-      }).named("Superstructure:Stopped");
-      case HOMING -> Command.noRequirements(coroutine -> {
-        coroutine.await(elevator.homingCommand());
-        status = elevator.isPositionControlReady() ? "HOMING/COMPLETE" : "HOMING/FAILED";
-        if (!elevator.isPositionControlReady()) stopRequested = true;
-      }).named("Superstructure:Home");
-      case READY_EMPTY, READY_HOLDING_CORAL -> holdDefault();
-      case PREPARED_L2, PREPARED_L3, PREPARED_L4 -> holdPrepared(levelOf(state));
-      case STOWING -> stowArm();
-      case STORING_CORAL -> storeCoral();
-      case SCANNING_CORAL -> scanSlots();
-      case GETTING_BLACK_CORAL, GETTING_WHITE_CORAL -> getCoral(colorOf(state));
-      case PREPARING_L2, PREPARING_L3, PREPARING_L4 -> prepareArm(levelOf(state));
-      case PICKING_UP_L2, PICKING_UP_L3, PICKING_UP_L4 -> pickUpCoral(levelOf(state));
-      case PLACING_L2, PLACING_L3, PLACING_L4 -> placeCoral(levelOf(state));
-    };
   }
 
   private void stopMechanisms(Set<Mechanism> requirements) {
     if (requirements.contains(elevator)) elevator.stop();
     if (requirements.contains(indexer)) indexer.stop();
-  }
-
-  // These private flows only run under stateCommand, which reserves their complete requirements.
-  // Successful finite motion retains its last position loop while the parent waits for the next step.
-
-  private boolean awaitSafeMove(Coroutine coroutine, ArmPose pose) {
-    ElevatorMoveSafelyCommand movement = new ElevatorMoveSafelyCommand(elevator, pose);
-    coroutine.await(movement);
-    if (movement.hasSucceeded()) return true;
-    // await reports termination, so failed travel must explicitly abort the enclosing action.
-    status = currentSuperState.name() + "/ELEVATOR_MOVE_FAILED";
-    stopRequested = true;
-    stopMechanisms(requirementsFor(currentSuperState));
-    return false;
-  }
-
-  private Command holdDefault() {
-    return Command.noRequirements(coroutine -> {
-      requireAutomation(coroutine);
-      if (!awaitSafeMove(coroutine, STOW)) return;
-      coroutine.park();
-    }).named("Superstructure:HoldStow");
-  }
-
-  private Command holdPrepared(Level level) {
-    return Command.noRequirements(coroutine -> {
-      requireAutomation(coroutine);
-      if (selectedSide == null) block(coroutine, "NO_PREPARED_SIDE");
-      ArmPose pose = preparation(level, endEffectorCoralState, selectedSide);
-      if (!awaitSafeMove(coroutine, pose)) return;
-      coroutine.park();
-    }).named("Superstructure:HoldPrepared");
-  }
-
-  private Command stowArm() {
-    return Command.noRequirements(coroutine -> {
-      indexer.stop();
-      requireAutomation(coroutine);
-      clearPreparation();
-      if (!awaitSafeMove(coroutine, STOW)) return;
-      completeAction();
-    }).named("Superstructure:StowArm");
-  }
-
-  private Command prepareArm(Level level) {
-    return Command.noRequirements(coroutine -> {
-      indexer.stop();
-      requireAutomation(coroutine);
-      selectedLevel = null;
-      selectedSide = null;
-      if (endEffectorCoralState == CoralState.UNKNOWN) block(coroutine, "UNKNOWN_GRIPPER");
-      var selection = ReefAlignCommand.selectReef(drive.getPose());
-      if (selection.isEmpty()) block(coroutine, "NO_REEF_SIDE");
-      RobotSide side = selection.orElseThrow().side();
-      if (endEffectorCoralState == CoralState.EMPTY
-          && !CoralHandlingConstants.positive(GRAB_ENTRY_HEIGHT_DROP.in(Meters))) {
-        block(coroutine, "INVALID_GRAB_OFFSET");
-      }
-      ArmPose pose = preparation(level, endEffectorCoralState, side);
-      if (!awaitSafeMove(coroutine, pose)) return;
-      selectedLevel = level;
-      selectedSide = side;
-      completeAction();
-    }).named("Superstructure:PrepareArm");
-  }
-
-  /** Raise clear, align one fixed slot, descend open, detect, clamp, and extract. */
-  private Command getCoral(CoralState wanted) {
-    return Command.noRequirements(coroutine -> {
-      indexer.stop();
-      requireAutomation(coroutine);
-      if (endEffectorCoralState != CoralState.EMPTY) block(coroutine, "GRIPPER_NOT_EMPTY");
-      OptionalInt matchingSlot = findNearestSlot(wanted);
-      if (matchingSlot.isEmpty()) block(coroutine, "NO_MATCHING_SLOT");
-      int slot = matchingSlot.orElseThrow();
-      clearPreparation();
-
-      status = currentSuperState.name() + "/CLEARING_INDEXER";
-      if (!awaitSafeMove(coroutine, STOW)) return;
-      // Empty jaw opening and turntable alignment may overlap only after the arm is clear.
-      var opening = coroutine.fork(jaw.openCommand());
-      coroutine.await(indexer.rotateToSlotCommand(slot));
-      opening.awaitCompletion();
-      if (!awaitSafeMove(coroutine, INDEXER_PICKUP)) return;
-      status = currentSuperState.name() + "/WAITING_FOR_CORAL";
-      observeEndEffector(coroutine, Superstructure::isCoral);
-      coroutine.waitUntil(() -> elevator.hasReached(INDEXER_PICKUP)
-          && indexer.isSlotSettled(slot)
-          && coralSensor.getEndEffectorObservation().filter(Superstructure::isCoral).isPresent());
-
-      // From the actuation request until post-retreat confirmation, neither record is certain.
-      setSlotCoralState(slot, CoralState.UNKNOWN);
-      endEffectorCoralState = CoralState.UNKNOWN;
-      coroutine.await(jaw.clampCommand());
-      if (!awaitSafeMove(coroutine, STOW)) return;
-      status = currentSuperState.name() + "/CONFIRMING_PICKUP";
-      CoralState grabbed = observeEndEffector(coroutine, Superstructure::isCoral);
-      endEffectorCoralState = grabbed;
-      setSlotCoralState(slot, CoralState.EMPTY);
-      completeAction();
-    }).named("Superstructure:GetCoral");
-  }
-
-  private Command storeCoral() {
-    return Command.noRequirements(coroutine -> {
-      indexer.stop();
-      requireAutomation(coroutine);
-      CoralState held = endEffectorCoralState;
-      if (!isCoral(held)) block(coroutine, "NO_CONFIRMED_CORAL");
-      OptionalInt emptySlot = findNearestSlot(CoralState.EMPTY);
-      if (emptySlot.isEmpty()) block(coroutine, "NO_EMPTY_SLOT");
-      int slot = emptySlot.orElseThrow();
-      clearPreparation();
-
-      status = currentSuperState.name() + "/CLEARING_INDEXER";
-      if (!awaitSafeMove(coroutine, STOW)) return;
-      coroutine.await(indexer.rotateToSlotCommand(slot));
-      if (!awaitSafeMove(coroutine, INDEXER_STORE)) return;
-      coroutine.waitUntil(() -> elevator.hasReached(INDEXER_STORE) && indexer.isSlotSettled(slot));
-      setSlotCoralState(slot, CoralState.UNKNOWN);
-      endEffectorCoralState = CoralState.UNKNOWN;
-      status = currentSuperState.name() + "/RELEASING";
-      coroutine.await(jaw.openCommand());
-      if (!awaitSafeMove(coroutine, STOW)) return;
-      status = currentSuperState.name() + "/CONFIRMING_RELEASE";
-      observeEndEffector(coroutine, state -> state == CoralState.EMPTY);
-      setSlotCoralState(slot, held);
-      endEffectorCoralState = CoralState.EMPTY;
-      completeAction();
-    }).named("Superstructure:StoreCoral");
-  }
-
-  /** Scan progress belongs to this invocation; interrupted scans never commit partial inventory. */
-  private Command scanSlots() {
-    return Command.noRequirements(coroutine -> {
-      indexer.stop();
-      requireAutomation(coroutine);
-      clearPreparation();
-      if (!InventoryScanConstants.turntableConfigured()) block(coroutine, "SCAN_UNCONFIGURED");
-      ArmPose clearance = new ArmPose(
-          Meters.of(Math.max(elevator.getHeight().in(Meters),
-              CoralHandlingConstants.INDEXER_MIN_SAFE_HEIGHT.in(Meters)
-                  + CoralHandlingConstants.INDEXER_HEIGHT_MARGIN.in(Meters)
-                  + ElevatorConstants.POSITION_TOLERANCE.in(Meters))),
-          elevator.getPivotAngle());
-      if (!awaitSafeMove(coroutine, clearance)) return;
-      CoralState[] scanned = new CoralState[SpinIndexerConstants.SLOT_COUNT];
-      for (int slot = 0; slot < scanned.length; slot++) {
-        status = currentSuperState.name() + "/SLOT_" + (slot + 1);
-        Angle target = InventoryScanConstants.slotAngle(slot);
-        coroutine.await(indexer.rotateToAngleCommand(target,
-            InventoryScanConstants.ALIGNMENT_TOLERANCE, InventoryScanConstants.SETTLE_SECONDS));
-        waitForSensorFlush(coroutine);
-        coralSensor.resetIndexerObservation();
-        coroutine.waitUntil(() -> coralSensor.getIndexerObservation().isPresent());
-        scanned[slot] = coralSensor.getIndexerObservation().orElseThrow();
-      }
-      for (int slot = 0; slot < scanned.length; slot++) setSlotCoralState(slot, scanned[slot]);
-      completeAction();
-    }).named("Superstructure:ScanSlots");
-  }
-
-  private Command pickUpCoral(Level level) {
-    return Command.noRequirements(coroutine -> {
-      drive.stop();
-      requireAutomation(coroutine);
-      if (endEffectorCoralState != CoralState.EMPTY) block(coroutine, "GRIPPER_NOT_EMPTY");
-      AlignmentTarget target = alignment;
-      if (target == null || selectedSide != target.side()) block(coroutine, "NO_MATCHING_ALIGNMENT");
-      ArmPose entry = preparation(level, CoralState.EMPTY, target.side());
-      ArmPose atBranch = grabPose(level, target.side());
-      ArmPose away = new ArmPose(atBranch.height(), reefPreparationAngle(target.side()));
-      if (!CoralHandlingConstants.positive(GRAB_ENTRY_HEIGHT_DROP.in(Meters))
-          || !entry.configured() || !atBranch.configured() || !away.configured()) {
-        block(coroutine, "INVALID_REEF_POSES");
-      }
-
-      if (!awaitSafeMove(coroutine, entry)) return;
-      coroutine.await(jaw.openCommand());
-      status = currentSuperState.name() + "/WAITING_FOR_ALIGNMENT";
-      coroutine.waitUntil(() -> reefPoseReached(target));
-      coroutine.await(elevator.moveToCommand(atBranch));
-      status = currentSuperState.name() + "/WAITING_FOR_CORAL";
-      observeEndEffector(coroutine, Superstructure::isCoral);
-      coroutine.waitUntil(() -> reefPoseReached(target) && elevator.hasReached(atBranch)
-          && coralSensor.getEndEffectorObservation().filter(Superstructure::isCoral).isPresent());
-      endEffectorCoralState = CoralState.UNKNOWN;
-      status = currentSuperState.name() + "/CLAMPING";
-      coroutine.await(jaw.clampCommand());
-      if (!awaitSafeMove(coroutine, away)) return;
-      status = currentSuperState.name() + "/CONFIRMING_PICKUP";
-      endEffectorCoralState = observeEndEffector(coroutine, Superstructure::isCoral);
-      completeAction();
-    }).named("Superstructure:PickUpCoral");
-  }
-
-  private Command placeCoral(Level level) {
-    return Command.noRequirements(coroutine -> {
-      drive.stop();
-      requireAutomation(coroutine);
-      if (!isCoral(endEffectorCoralState)) block(coroutine, "NO_CONFIRMED_CORAL");
-      AlignmentTarget target = alignment;
-      if (target == null || selectedSide != target.side()) block(coroutine, "NO_MATCHING_ALIGNMENT");
-      ArmPose atBranch = new ArmPose(reefHeight(level), reefPlaceAngle(target.side()));
-      Distance exitHeight = Meters.of(atBranch.height().in(Meters) - PLACE_EXIT_HEIGHT_DROP.in(Meters));
-      ArmPose clear = new ArmPose(exitHeight, VERTICAL_UP_PIVOT_ANGLE);
-      if (!CoralHandlingConstants.positive(PLACE_EXIT_HEIGHT_DROP.in(Meters))
-          || !atBranch.configured() || !clear.configured()
-          || clear.height().in(Meters) < CoralHandlingConstants.INDEXER_MIN_SAFE_HEIGHT.in(Meters)
-              + CoralHandlingConstants.INDEXER_HEIGHT_MARGIN.in(Meters)
-              + ElevatorConstants.POSITION_TOLERANCE.in(Meters)) {
-        block(coroutine, "INVALID_REEF_POSES");
-      }
-
-      if (!awaitSafeMove(coroutine, atBranch)) return;
-      status = currentSuperState.name() + "/WAITING_FOR_ALIGNMENT";
-      coroutine.waitUntil(() -> reefPoseReached(target) && elevator.hasReached(atBranch));
-      endEffectorCoralState = CoralState.UNKNOWN;
-      status = currentSuperState.name() + "/RELEASING";
-      coroutine.await(jaw.openCommand());
-      // This calibrated Reef exit intentionally lowers and pivots concurrently.
-      coroutine.await(elevator.moveToCommand(clear));
-      status = currentSuperState.name() + "/CONFIRMING_RELEASE";
-      observeEndEffector(coroutine, state -> state == CoralState.EMPTY);
-      endEffectorCoralState = CoralState.EMPTY;
-      completeAction();
-    }).named("Superstructure:PlaceCoral");
-  }
-
-  private void requireAutomation(Coroutine coroutine) {
-    if (!CoralHandlingConstants.AUTOMATION_CONFIGURED
-        || !CoralHandlingConstants.clearanceConfigured()) block(coroutine, "AUTOMATION_UNCONFIGURED");
-  }
-
-  private void clearPreparation() {
-    selectedLevel = null;
-    selectedSide = null;
-    alignment = null;
-  }
-
-  private void block(Coroutine coroutine, String reason) {
-    elevator.holdStill();
-    status = currentSuperState.name() + "/" + reason;
-    // Keep the action and its requirements alive until an operator transition cancels it.
-    coroutine.park();
-  }
-
-  private void completeAction() {
-    status = currentSuperState.name() + "/COMPLETE";
-  }
-
-  private void waitForSensorFlush(Coroutine coroutine) {
-    if (!CoralHandlingConstants.positive(InventoryScanConstants.SENSOR_FLUSH_SECONDS)) {
-      block(coroutine, "SENSOR_FLUSH_UNCONFIGURED");
-    }
-    coroutine.wait(Seconds.of(InventoryScanConstants.SENSOR_FLUSH_SECONDS));
-  }
-
-  /** Discard in-motion/integration samples and require a new stable reading at this pose. */
-  private CoralState observeEndEffector(Coroutine coroutine, Predicate<CoralState> accepted) {
-    waitForSensorFlush(coroutine);
-    coralSensor.resetEndEffectorObservation();
-    coroutine.waitUntil(() -> coralSensor.getEndEffectorObservation().filter(accepted).isPresent());
-    return coralSensor.getEndEffectorObservation().orElseThrow();
-  }
-
-  private static boolean isCoral(CoralState state) {
-    return state == CoralState.BLACK || state == CoralState.WHITE;
-  }
-
-  // ========== Shared helpers ==========
-
-  /**
-   * True when the chassis sits on the last aligned reef pose within the configured tolerances —
-   * 2910's isReadyToEject idea: the chassis must be on the branch before grabbing from it or
-   * releasing onto it.
-   */
-  private boolean reefPoseReached(AlignmentTarget target) {
-    return target != null && target.equals(alignment)
-        && drive.isWithinPose(
-            target.pose(), REEF_POSITION_TOLERANCE_METERS, REEF_HEADING_TOLERANCE_RADIANS);
-  }
-
-  /** Finds the shortest rotation to slots with matching contents; EMPTY can select storage. */
-  private OptionalInt findNearestSlot(CoralState state) {
-    Objects.requireNonNull(state, "state");
-    if (!indexer.isPositionControlReady()) {
-      return OptionalInt.empty();
-    }
-    int nearestSlot = -1;
-    double shortestDistance = Double.POSITIVE_INFINITY;
-    for (int slot = 0; slot < SpinIndexerConstants.SLOT_COUNT; slot++) {
-      if (getSlotCoralState(slot) != state) {
-        continue;
-      }
-      double distance = Math.abs(indexer.angleToSlot(slot));
-      // Ascending slot order resolves equal-distance choices deterministically.
-      if (distance < shortestDistance - 1.0e-9) {
-        shortestDistance = distance;
-        nearestSlot = slot;
-      }
-    }
-    return nearestSlot == -1 ? OptionalInt.empty() : OptionalInt.of(nearestSlot);
-  }
-
-  /** The parked pose for the jaw's contents; an empty jaw parks a grab-entry drop below grabbing. */
-  private static ArmPose preparation(Level level, CoralState held, RobotSide side) {
-    Distance height = reefHeight(level);
-    if (held == CoralState.EMPTY) {
-      return new ArmPose(Meters.of(height.in(Meters)
-          - GRAB_ENTRY_HEIGHT_DROP.in(Meters)), reefPlaceAngle(side));
-    }
-    return new ArmPose(height, reefPreparationAngle(side));
-  }
-
-  /** The true grab pose where LT clamps: the parked empty height risen by the grab entry drop. */
-  private static ArmPose grabPose(Level level, RobotSide side) {
-    return new ArmPose(reefHeight(level), reefPlaceAngle(side));
-  }
-
-  private static SuperState pickupStateForLevel(Level level) {
-    if (level == null) {
-      return null;
-    }
-    return switch (level) {
-      case L2 -> SuperState.PICKING_UP_L2;
-      case L3 -> SuperState.PICKING_UP_L3;
-      case L4 -> SuperState.PICKING_UP_L4;
-      default -> null;
-    };
-  }
-
-  private static SuperState placeStateForLevel(Level level) {
-    if (level == null) {
-      return null;
-    }
-    return switch (level) {
-      case L2 -> SuperState.PLACING_L2;
-      case L3 -> SuperState.PLACING_L3;
-      case L4 -> SuperState.PLACING_L4;
-      default -> null;
-    };
-  }
-
-  private static Level levelOf(SuperState state) {
-    return switch (state) {
-      case PREPARED_L2, PREPARING_L2, PICKING_UP_L2, PLACING_L2 -> Level.L2;
-      case PREPARED_L3, PREPARING_L3, PICKING_UP_L3, PLACING_L3 -> Level.L3;
-      case PREPARED_L4, PREPARING_L4, PICKING_UP_L4, PLACING_L4 -> Level.L4;
-      default -> null;
-    };
-  }
-
-  private static CoralState colorOf(SuperState state) {
-    return state == SuperState.GETTING_BLACK_CORAL ? CoralState.BLACK : CoralState.WHITE;
-  }
-
-  private static boolean isActionState(SuperState state) {
-    return state == SuperState.HOMING
-        || state == SuperState.STOWING
-        || state == SuperState.SCANNING_CORAL
-        || isTransfer(state)
-        || isPreparing(state)
-        || isReefAction(state);
-  }
-
-  private static boolean isGetting(SuperState state) {
-    return state == SuperState.GETTING_BLACK_CORAL || state == SuperState.GETTING_WHITE_CORAL;
-  }
-
-  private static boolean isStoring(SuperState state) {
-    return state == SuperState.STORING_CORAL;
-  }
-
-  private static boolean isTransfer(SuperState state) {
-    return isGetting(state) || isStoring(state);
-  }
-
-  private static boolean isPreparing(SuperState state) {
-    return state == SuperState.PREPARING_L2
-        || state == SuperState.PREPARING_L3
-        || state == SuperState.PREPARING_L4;
-  }
-
-  private static boolean isPickingUp(SuperState state) {
-    return state == SuperState.PICKING_UP_L2
-        || state == SuperState.PICKING_UP_L3
-        || state == SuperState.PICKING_UP_L4;
-  }
-
-  private static boolean isReefAction(SuperState state) {
-    return isPickingUp(state)
-        || state == SuperState.PLACING_L2
-        || state == SuperState.PLACING_L3
-        || state == SuperState.PLACING_L4;
   }
 }
