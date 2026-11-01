@@ -1,7 +1,6 @@
 // Copyright (c) 2026 FRC 6907, The G.O.A.T
 package frc.robot.subsystems;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -122,70 +121,59 @@ public final class Superstructure {
   public Command controlCommand() {
     StateMachine machine = new StateMachine("Superstructure");
 
-    // ===== The state table: every state's name -> owned mechanisms + action command =====
-    Map<String, StateAction> table = Map.ofEntries(
-        Map.entry("STOPPED", new StateAction(Set.of(elevator, indexer),
-            SuperstructureCommandFactory.stoppedAction(elevator, indexer))),
-        Map.entry("HOMING", new StateAction(Set.of(elevator),
-            SuperstructureCommandFactory.homingAction(this, elevator))),
-        Map.entry("READY_EMPTY", new StateAction(Set.of(elevator),
-            SuperstructureCommandFactory.holdDefault(this, elevator))),
-        Map.entry("READY_HOLDING_CORAL", new StateAction(Set.of(elevator),
-            SuperstructureCommandFactory.holdDefault(this, elevator))),
-        Map.entry("PREPARED_L2", new StateAction(Set.of(elevator),
-            SuperstructureCommandFactory.holdPrepared(this, elevator, Level.L2))),
-        Map.entry("PREPARED_L3", new StateAction(Set.of(elevator),
-            SuperstructureCommandFactory.holdPrepared(this, elevator, Level.L3))),
-        Map.entry("PREPARED_L4", new StateAction(Set.of(elevator),
-            SuperstructureCommandFactory.holdPrepared(this, elevator, Level.L4))),
-        Map.entry("STOWING", new StateAction(Set.of(elevator, indexer),
-            SuperstructureCommandFactory.stowArm(this, elevator, indexer))),
-        Map.entry("STORING_CORAL", new StateAction(Set.of(elevator, indexer, jaw, coralSensor),
-            SuperstructureCommandFactory.storeCoral(this, elevator, indexer, jaw, coralSensor))),
-        Map.entry("SCANNING_CORAL", new StateAction(Set.of(elevator, indexer, coralSensor),
-            SuperstructureCommandFactory.scanSlots(this, elevator, indexer, coralSensor))),
-        Map.entry("GETTING_BLACK_CORAL", new StateAction(
-            Set.of(elevator, indexer, jaw, coralSensor),
+    // ===== The state table: each entry registers a named state -> owned mechanisms + action =====
+    Map<String, State> states = Map.ofEntries(
+        stateEntry(machine, "STOPPED", Set.of(elevator, indexer),
+            SuperstructureCommandFactory.stoppedAction(elevator, indexer)),
+        stateEntry(machine, "HOMING", Set.of(elevator),
+            SuperstructureCommandFactory.homingAction(this, elevator)),
+        stateEntry(machine, "READY_EMPTY", Set.of(elevator),
+            SuperstructureCommandFactory.holdDefault(this, elevator)),
+        stateEntry(machine, "READY_HOLDING_CORAL", Set.of(elevator),
+            SuperstructureCommandFactory.holdDefault(this, elevator)),
+        stateEntry(machine, "PREPARED_L2", Set.of(elevator),
+            SuperstructureCommandFactory.holdPrepared(this, elevator, Level.L2)),
+        stateEntry(machine, "PREPARED_L3", Set.of(elevator),
+            SuperstructureCommandFactory.holdPrepared(this, elevator, Level.L3)),
+        stateEntry(machine, "PREPARED_L4", Set.of(elevator),
+            SuperstructureCommandFactory.holdPrepared(this, elevator, Level.L4)),
+        stateEntry(machine, "STOWING", Set.of(elevator, indexer),
+            SuperstructureCommandFactory.stowArm(this, elevator, indexer)),
+        stateEntry(machine, "STORING_CORAL", Set.of(elevator, indexer, jaw, coralSensor),
+            SuperstructureCommandFactory.storeCoral(this, elevator, indexer, jaw, coralSensor)),
+        stateEntry(machine, "SCANNING_CORAL", Set.of(elevator, indexer, coralSensor),
+            SuperstructureCommandFactory.scanSlots(this, elevator, indexer, coralSensor)),
+        stateEntry(machine, "GETTING_BLACK_CORAL", Set.of(elevator, indexer, jaw, coralSensor),
             SuperstructureCommandFactory.getCoral(
-                this, elevator, indexer, jaw, coralSensor, CoralState.BLACK))),
-        Map.entry("GETTING_WHITE_CORAL", new StateAction(
-            Set.of(elevator, indexer, jaw, coralSensor),
+                this, elevator, indexer, jaw, coralSensor, CoralState.BLACK)),
+        stateEntry(machine, "GETTING_WHITE_CORAL", Set.of(elevator, indexer, jaw, coralSensor),
             SuperstructureCommandFactory.getCoral(
-                this, elevator, indexer, jaw, coralSensor, CoralState.WHITE))),
-        Map.entry("PREPARING_L2", new StateAction(Set.of(elevator, indexer),
-            SuperstructureCommandFactory.prepareArm(this, drive, elevator, indexer, Level.L2))),
-        Map.entry("PREPARING_L3", new StateAction(Set.of(elevator, indexer),
-            SuperstructureCommandFactory.prepareArm(this, drive, elevator, indexer, Level.L3))),
-        Map.entry("PREPARING_L4", new StateAction(Set.of(elevator, indexer),
-            SuperstructureCommandFactory.prepareArm(this, drive, elevator, indexer, Level.L4))),
-        Map.entry("PICKING_UP_L2", new StateAction(
-            Set.of(drive, elevator, jaw, coralSensor),
+                this, elevator, indexer, jaw, coralSensor, CoralState.WHITE)),
+        stateEntry(machine, "PREPARING_L2", Set.of(elevator, indexer),
+            SuperstructureCommandFactory.prepareArm(this, drive, elevator, indexer, Level.L2)),
+        stateEntry(machine, "PREPARING_L3", Set.of(elevator, indexer),
+            SuperstructureCommandFactory.prepareArm(this, drive, elevator, indexer, Level.L3)),
+        stateEntry(machine, "PREPARING_L4", Set.of(elevator, indexer),
+            SuperstructureCommandFactory.prepareArm(this, drive, elevator, indexer, Level.L4)),
+        stateEntry(machine, "PICKING_UP_L2", Set.of(drive, elevator, jaw, coralSensor),
             SuperstructureCommandFactory.pickUpCoral(
-                this, drive, elevator, jaw, coralSensor, Level.L2))),
-        Map.entry("PICKING_UP_L3", new StateAction(
-            Set.of(drive, elevator, jaw, coralSensor),
+                this, drive, elevator, jaw, coralSensor, Level.L2)),
+        stateEntry(machine, "PICKING_UP_L3", Set.of(drive, elevator, jaw, coralSensor),
             SuperstructureCommandFactory.pickUpCoral(
-                this, drive, elevator, jaw, coralSensor, Level.L3))),
-        Map.entry("PICKING_UP_L4", new StateAction(
-            Set.of(drive, elevator, jaw, coralSensor),
+                this, drive, elevator, jaw, coralSensor, Level.L3)),
+        stateEntry(machine, "PICKING_UP_L4", Set.of(drive, elevator, jaw, coralSensor),
             SuperstructureCommandFactory.pickUpCoral(
-                this, drive, elevator, jaw, coralSensor, Level.L4))),
-        Map.entry("PLACING_L2", new StateAction(
-            Set.of(drive, elevator, jaw, coralSensor),
+                this, drive, elevator, jaw, coralSensor, Level.L4)),
+        stateEntry(machine, "PLACING_L2", Set.of(drive, elevator, jaw, coralSensor),
             SuperstructureCommandFactory.placeCoral(
-                this, drive, elevator, jaw, coralSensor, Level.L2))),
-        Map.entry("PLACING_L3", new StateAction(
-            Set.of(drive, elevator, jaw, coralSensor),
+                this, drive, elevator, jaw, coralSensor, Level.L2)),
+        stateEntry(machine, "PLACING_L3", Set.of(drive, elevator, jaw, coralSensor),
             SuperstructureCommandFactory.placeCoral(
-                this, drive, elevator, jaw, coralSensor, Level.L3))),
-        Map.entry("PLACING_L4", new StateAction(
-            Set.of(drive, elevator, jaw, coralSensor),
+                this, drive, elevator, jaw, coralSensor, Level.L3)),
+        stateEntry(machine, "PLACING_L4", Set.of(drive, elevator, jaw, coralSensor),
             SuperstructureCommandFactory.placeCoral(
-                this, drive, elevator, jaw, coralSensor, Level.L4))));
+                this, drive, elevator, jaw, coralSensor, Level.L4)));
 
-    Map<String, State> states = new HashMap<>();
-    table.forEach(
-        (name, action) -> states.put(name, addState(machine, name, action.requirements(), action.action())));
     machine.setInitialState(states.get(defaultCurrentState()));
 
     // ===== Transitions, in evaluation order =====
@@ -247,8 +235,11 @@ public final class Superstructure {
         .named("Superstructure:Teleop");
   }
 
-  /** A state's owned mechanisms and action command, paired in the state table. */
-  private record StateAction(Set<Mechanism> requirements, Command action) {}
+  /** Adds a named state to the machine and pairs it with its name for the state table. */
+  private Map.Entry<String, State> stateEntry(
+      StateMachine machine, String name, Set<Mechanism> requirements, Command action) {
+    return Map.entry(name, addState(machine, name, requirements, action));
+  }
 
   /** Adds a named state whose command reserves its mechanisms and records the entry. */
   private State addState(
